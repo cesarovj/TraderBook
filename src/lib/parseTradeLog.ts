@@ -48,9 +48,10 @@ function parseRow(row: string): RawFill | null {
 }
 
 function parseDateTime(dt: string): Date {
-  // Format: "2026-04-10  13:41:34.751549"
+  // Format: "2026-04-10  13:41:34.751549" — Sierra Chart stores times in UTC
+  // Append "Z" so JavaScript parses as UTC; date-fns format() will display in local time
   const cleaned = dt.replace(/\s+/, "T").split(".")[0];
-  return new Date(cleaned);
+  return new Date(cleaned + "Z");
 }
 
 function computePnl(
@@ -108,8 +109,9 @@ export function parseTradeLog(content: string): Trade[] {
       const open = positions.splice(openIdx, 1)[0];
       const baseSymbol = getBaseSymbol(symbol);
 
-      const entryDateTime = parseDateTime(open.fill.dateTime);
-      const exitDateTime = parseDateTime(fill.dateTime);
+      // Use transDateTime (exchange fill time) rather than dateTime (SC receipt time)
+      const entryDateTime = parseDateTime(open.fill.transDateTime);
+      const exitDateTime = parseDateTime(fill.transDateTime);
 
       const pnl = computePnl(
         open.direction,

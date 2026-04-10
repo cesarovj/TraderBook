@@ -105,7 +105,13 @@ export const PRICE_DIVISORS: Record<string, number> = {
 };
 
 export function getBaseSymbol(symbol: string): string {
-  // e.g. MESM26_FUT_CME -> MES
-  const match = symbol.match(/^([A-Z]+)/);
-  return match ? match[1] : symbol;
+  // Sierra Chart format: {ROOT}{MONTH_CODE}{YY}_FUT_{EXCHANGE}
+  // Month codes: F G H J K M N Q U V X Z
+  // Use lazy match to stop at the first month-code letter followed by digits
+  // e.g. MESM26_FUT_CME -> MES, ESM26_FUT_CME -> ES, MNQM26 -> MNQ
+  const match = symbol.match(/^([A-Z]+?)([FGHJKMNQUVXZ]\d)/);
+  if (match) return match[1];
+  // Fallback: strip trailing digits and exchange suffix
+  const fallback = symbol.match(/^([A-Z]+)/);
+  return fallback ? fallback[1] : symbol;
 }

@@ -26,7 +26,7 @@ export default function TradeTable({ trades }: TradeTableProps) {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              {["Symbol", "Date", "Dir", "Entry", "Exit", "Qty", "Duration", "P&L"].map((h) => (
+              {["Symbol", "Entry Time", "Dir", "Entry", "Exit", "Qty", "Duration", "P&L"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-3 text-left font-medium"
@@ -46,7 +46,7 @@ export default function TradeTable({ trades }: TradeTableProps) {
               >
                 <td className="px-4 py-3 font-medium text-white">{trade.symbol}</td>
                 <td className="px-4 py-3" style={{ color: "var(--text-secondary)" }}>
-                  {format(trade.exitDateTime, "MMM d, HH:mm")}
+                  {format(trade.entryDateTime, "MMM d, HH:mm:ss")}
                 </td>
                 <td className="px-4 py-3">
                   <span
