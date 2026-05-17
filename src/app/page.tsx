@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { parseTradeLog } from "@/lib/parseTradeLog";
 import { calculateMetrics, formatCurrency, formatDuration } from "@/lib/calculateMetrics";
 import { Trade, Metrics } from "@/lib/types";
+import { checkImport, saveImport, fetchAllTrades, hashContent } from "@/lib/api";
 import FileUpload from "@/components/FileUpload";
 import MetricCard from "@/components/MetricCard";
 import PnLChart from "@/components/PnLChart";
@@ -13,26 +14,79 @@ import TradeTable from "@/components/TradeTable";
 export default function Dashboard() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [filename, setFilename] = useState<string>("");
+  const [importCount, setImportCount] = useState(0);
   const [error, setError] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "trades">("overview");
 
-  const handleFileLoaded = useCallback((content: string, name: string) => {
-    try {
-      setError("");
-      const parsed = parseTradeLog(content);
-      if (parsed.length === 0) {
-        setError("No valid trades found. Make sure this is a Sierra Chart Trade Activity Log export.");
-        return;
-      }
-      const m = calculateMetrics(parsed);
-      setTrades(parsed);
-      setMetrics(m);
-      setFilename(name);
-    } catch (e) {
-      setError(`Failed to parse file: ${e instanceof Error ? e.message : "Unknown error"}`);
-    }
+  // Load stored trades on mount
+  useEffect(() => {
+    fetchAllTrades()
+      .then((stored) => {
+        if (stored.length > 0) {
+          setTrades(stored);
+          setMetrics(calculateMetrics(stored));
+        }
+      })
+      .catch(() => {
+        // Backend not running — app still works without persistence
+      });
   }, []);
+
+  const handleFileLoaded = useCallback(
+    async (content: string, name: string) => {
+      setError("");
+      setIsLoading(true);
+      try {
+        const fileHash = await hashContent(content);
+
+        const { exists } = await checkImport(fileHash);
+        if (exists) {
+          setError(`"${name}" has already been imported. Your data is up to date.`);
+          return;
+        }
+
+        const parsed = parseTradeLog(content);
+        if (parsed.length === 0) {
+          setError("No valid trades found. Make sure this is a Sierra Chart Trade Activity Log export.");
+          return;
+        }
+
+        await saveImport(name, fileHash, parsed);
+
+        const merged = [...trades, ...parsed].sort(
+          (a, b) => b.exitDateTime.getTime() - a.exitDateTime.getTime()
+        );
+        setTrades(merged);
+        setMetrics(calculateMetrics(merged));
+        setImportCount((c) => c + 1);
+      } catch (e) {
+        if (e instanceof Error && e.message === "Backend unreachable") {
+          // Graceful degradation: parse and display without saving
+          try {
+            const parsed = parseTradeLog(content);
+            if (parsed.length === 0) {
+              setError("No valid trades found. Make sure this is a Sierra Chart Trade Activity Log export.");
+              return;
+            }
+            const merged = [...trades, ...parsed].sort(
+              (a, b) => b.exitDateTime.getTime() - a.exitDateTime.getTime()
+            );
+            setTrades(merged);
+            setMetrics(calculateMetrics(merged));
+            setError("Backend offline — trades loaded but not saved.");
+          } catch {
+            setError("Failed to parse file.");
+          }
+        } else {
+          setError(`Error: ${e instanceof Error ? e.message : "Unknown error"}`);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [trades]
+  );
 
   const hasData = metrics !== null && trades.length > 0;
 
@@ -53,20 +107,21 @@ export default function Dashboard() {
           <span className="text-lg font-bold text-white tracking-tight">TraderBook</span>
         </div>
         <div className="flex items-center gap-3">
-          {filename && (
+          {importCount > 0 && (
             <span className="text-xs px-2 py-1 rounded" style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}>
-              {filename}
+              {importCount} file{importCount !== 1 ? "s" : ""} imported
             </span>
           )}
           <button
-            onClick={() => document.getElementById("file-input")?.click()}
-            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors hover:opacity-90"
+            disabled={isLoading}
+            onClick={() => document.getElementById("header-file-input")?.click()}
+            className="text-sm px-4 py-2 rounded-lg font-medium transition-colors hover:opacity-90 disabled:opacity-50"
             style={{ background: "#6366f1", color: "white" }}
           >
-            Import Log
+            {isLoading ? "Importing…" : "Import Log"}
           </button>
           <input
-            id="file-input"
+            id="header-file-input"
             type="file"
             accept=".txt,.csv,.tsv"
             className="hidden"
@@ -76,6 +131,7 @@ export default function Dashboard() {
               const reader = new FileReader();
               reader.onload = (ev) => handleFileLoaded(ev.target?.result as string, file.name);
               reader.readAsText(file);
+              e.target.value = "";
             }}
           />
         </div>
@@ -93,7 +149,11 @@ export default function Dashboard() {
             </div>
             <FileUpload onFileLoaded={handleFileLoaded} />
             {error && (
-              <div className="mt-4 p-3 rounded-lg text-sm text-red-400" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              <div className="mt-4 p-3 rounded-lg text-sm" style={{
+                background: error.includes("already been imported") ? "rgba(234,179,8,0.1)" : "rgba(239,68,68,0.1)",
+                border: `1px solid ${error.includes("already been imported") ? "rgba(234,179,8,0.2)" : "rgba(239,68,68,0.2)"}`,
+                color: error.includes("already been imported") ? "#eab308" : "#f87171",
+              }}>
                 {error}
               </div>
             )}
@@ -113,6 +173,15 @@ export default function Dashboard() {
         ) : (
           /* Dashboard */
           <>
+            {error && (
+              <div className="mb-4 p-3 rounded-lg text-sm" style={{
+                background: error.includes("already been imported") ? "rgba(234,179,8,0.1)" : "rgba(239,68,68,0.1)",
+                border: `1px solid ${error.includes("already been imported") ? "rgba(234,179,8,0.2)" : "rgba(239,68,68,0.2)"}`,
+                color: error.includes("already been imported") ? "#eab308" : "#f87171",
+              }}>
+                {error}
+              </div>
+            )}
             {/* Tab navigation */}
             <div className="flex items-center gap-1 mb-6" style={{ borderBottom: "1px solid var(--border)" }}>
               {(["overview", "trades"] as const).map((tab) => (
@@ -130,7 +199,7 @@ export default function Dashboard() {
                 </button>
               ))}
               <div className="ml-auto text-xs" style={{ color: "var(--text-secondary)" }}>
-                {trades.length} trades imported
+                {trades.length} trades
               </div>
             </div>
 
